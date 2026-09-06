@@ -3,6 +3,7 @@ import { AppLayout } from './components/AppLayout'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { BooksPage } from './pages/BooksPage'
 import { LoginPage } from './pages/LoginPage'
+import { ReaderPage } from './pages/ReaderPage'
 
 export function App() {
   return (
@@ -11,6 +12,7 @@ export function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/books" element={<BooksPage />} />
+          <Route path="/reader/:bookId" element={<ReaderPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/books" replace />} />

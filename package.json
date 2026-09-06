@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
     "@vitejs/plugin-react": "latest",
+    "dexie": "^4.4.5",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "^7.18.3",
