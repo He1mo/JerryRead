@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { deleteBook, listBooks, uploadBook } from '../lib/books'
+import { synthesizeSpeech } from '../lib/tts'
 import type { Book } from '../types/library'
 
 function formatSize(size: number) {
@@ -12,6 +13,8 @@ export function BooksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
+  const [isTestingVoice, setIsTestingVoice] = useState(false)
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState('')
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -45,6 +48,20 @@ export function BooksPage() {
     }
   }
 
+  async function handleVoiceTest() {
+    setError('')
+    setIsTestingVoice(true)
+    try {
+      const audio = await synthesizeSpeech('你好，这里是 JerryRead。现在正在使用 Fish Audio 的免费语音模型朗读。')
+      if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl)
+      setVoicePreviewUrl(URL.createObjectURL(audio))
+    } catch (voiceError) {
+      setError(voiceError instanceof Error ? voiceError.message : '试音失败，请稍后再试。')
+    } finally {
+      setIsTestingVoice(false)
+    }
+  }
+
   return (
     <main className="books-page">
       <div className="page-heading page-heading-row">
@@ -61,6 +78,17 @@ export function BooksPage() {
 
       {error && <p className="form-error" role="alert">{error}</p>}
       {uploadProgress && <p className="loading-copy" role="status">{uploadProgress}</p>}
+      <section className="voice-test" aria-label="语音试音">
+        <div>
+          <p className="kicker">Fish Audio</p>
+          <h2>试一下央视频音</h2>
+          <p>使用固定的免费模型 s2.1-pro-free，不会自动切换到付费模型。</p>
+        </div>
+        <button className="primary-button" type="button" onClick={() => void handleVoiceTest()} disabled={isTestingVoice}>
+          {isTestingVoice ? '正在生成…' : '生成短句试音'}
+        </button>
+        {voicePreviewUrl ? <audio className="voice-preview" controls src={voicePreviewUrl}>浏览器不支持音频播放。</audio> : null}
+      </section>
       {isLoading ? <p className="loading-copy">正在整理书架…</p> : null}
       {!isLoading && !books.length ? (
         <section className="empty-shelf">
