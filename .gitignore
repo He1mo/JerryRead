@@ -8,3 +8,4 @@ coverage
 .DS_Store
 doc/token.txt
 jerryread-m1-*.png
+.tools/
