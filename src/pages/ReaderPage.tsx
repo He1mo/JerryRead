@@ -37,11 +37,13 @@ export function ReaderPage() {
   const [error, setError] = useState('')
   const audioRef = useRef<HTMLAudioElement>(null)
   const playSessionRef = useRef(0)
-  const precachingChaptersRef = useRef(new Set<number>())
   const sleepTimerRef = useRef<number | null>(null)
   const playerSettingsRef = useRef<HTMLDivElement>(null)
   const tocRef = useRef<HTMLElement>(null)
   const touchStartRef = useRef({ x: 0, y: 0 })
+  const didSwipeRef = useRef(false)
+  const pendingMobilePageRef = useRef<'first' | 'last' | 'playing' | null>(null)
+  const chapterTrackRef = useRef<{ endIndex: number; byteEnds: number[]; unitStarts: number[] } | null>(null)
   const units = useMemo(() => parsed ? buildReadingUnits(parsed) : [], [parsed])
   const chapter = parsed?.chapters[chapterIndex]
   const currentUnit = units[unitIndex]
@@ -186,11 +188,21 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!isMobile || !currentUnit || !mobilePages.length) return
+    if (pendingMobilePageRef.current) {
+      const targetPage = pendingMobilePageRef.current === 'playing'
+        ? mobilePages.findIndex((chunks) => chunks.some((chunk) => chunk.paragraphIndex === currentUnit.paragraphIndex && chunk.sentences.some((sentence) => sentence.offset === currentUnit.textOffset)))
+        : pendingMobilePageRef.current === 'last' ? mobilePages.length - 1 : 0
+      setMobilePageIndex(Math.max(0, targetPage))
+      pendingMobilePageRef.current = null
+      return
+    }
+    if (currentUnit.chapterIndex !== chapterIndex) return
+    if (chapterTrackRef.current) return
     const page = mobilePages.findIndex((chunks) => chunks.some((chunk) => chunk.paragraphIndex === currentUnit.paragraphIndex && chunk.sentences.some((sentence) => sentence.offset === currentUnit.textOffset)))
     if (page < 0) return
     const frame = window.requestAnimationFrame(() => setMobilePageIndex(page))
     return () => window.cancelAnimationFrame(frame)
-  }, [currentUnit, isMobile, mobilePages])
+  }, [chapterIndex, currentUnit, isMobile, mobilePages])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -226,7 +238,7 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
-    navigator.mediaSession.metadata = new MediaMetadata({ title: chapter?.title ?? book?.title, artist: book?.title, album: 'JerryRead' })
+    navigator.mediaSession.metadata = new MediaMetadata({ title: parsed?.chapters[currentUnit?.chapterIndex ?? chapterIndex]?.title ?? book?.title, artist: book?.title, album: 'JerryRead' })
     navigator.mediaSession.setActionHandler('play', () => void playCurrent())
     navigator.mediaSession.setActionHandler('pause', pause)
     navigator.mediaSession.setActionHandler('previoustrack', () => move(-1, isPlaying))
@@ -237,18 +249,31 @@ export function ReaderPage() {
     const unit = units[index]
     if (!unit) return
     const playSession = ++playSessionRef.current
-    setChapterIndex(unit.chapterIndex)
     setError(''); setIsPreparing(true)
     try {
-      const currentAudio = synthesizeSpeech(unit.text, { bookId: unit.bookId, chapterIndex: unit.chapterIndex, priority: 0 })
-      void precacheAround(index)
-      const blob = await currentAudio
+      const chapterEnd = units.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.chapterIndex !== unit.chapterIndex)
+      const endIndex = chapterEnd < 0 ? units.length : chapterEnd
+      setCacheStatus('正在准备本章连续音频')
+      const groups: Array<{ text: string; unitStart: number }> = []
+      for (let cursor = index; cursor < endIndex; cursor += 1) {
+        const candidate = units[cursor]
+        const last = groups.at(-1)
+        if (last && last.text.length + candidate.text.length <= 280) last.text += candidate.text
+        else groups.push({ text: candidate.text, unitStart: cursor })
+      }
+      const blobs = await Promise.all(groups.map((group, offset) => synthesizeSpeech(group.text, {
+        bookId: unit.bookId,
+        chapterIndex: unit.chapterIndex,
+        priority: offset === 0 ? 0 : offset < 3 ? 1 : 2,
+      })))
       if (playSession !== playSessionRef.current) return
       const audio = audioRef.current
       if (!audio) return
       if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src)
-      audio.src = URL.createObjectURL(blob); audio.playbackRate = speed
-      await audio.play(); setIsPlaying(true)
+      let bytes = 0
+      chapterTrackRef.current = { endIndex, byteEnds: blobs.map((blob) => (bytes += blob.size)), unitStarts: groups.map((group) => group.unitStart) }
+      audio.src = URL.createObjectURL(new Blob(blobs, { type: 'audio/mpeg' })); audio.playbackRate = speed
+      await audio.play(); setIsPlaying(true); setCacheStatus('本章连续播放已就绪')
     } catch (cause) {
       if (playSession === playSessionRef.current) {
         setError(cause instanceof Error ? cause.message : '播放失败。')
@@ -259,42 +284,11 @@ export function ReaderPage() {
     }
   }
 
-  async function precacheAround(index: number) {
-    const origin = units[index]
-    if (!origin || precachingChaptersRef.current.has(origin.chapterIndex)) return
-    precachingChaptersRef.current.add(origin.chapterIndex)
-    const chapterEnd = units.findIndex((unit, nextIndex) => nextIndex > index && unit.chapterIndex !== origin.chapterIndex)
-    const end = chapterEnd < 0 ? units.length : chapterEnd
-    let futureCharacters = 0
-    setCacheStatus('本章缓存中')
-    const results = await Promise.allSettled(units.slice(index + 1, end).map((unit) => {
-      futureCharacters += unit.text.length
-      return synthesizeSpeech(unit.text, {
-        bookId: unit.bookId,
-        chapterIndex: unit.chapterIndex,
-        priority: futureCharacters <= 360 * speed ? 1 : 2,
-      })
-    }))
-    if (results.every((result) => result.status === 'fulfilled') && units[unitIndex]?.chapterIndex === origin.chapterIndex) setCacheStatus('本章已缓存')
-
-    let nextCharacters = 0
-    const nextChapter = units.slice(end).filter((unit) => unit.chapterIndex === origin.chapterIndex + 1).filter((unit) => {
-      nextCharacters += unit.text.length
-      return nextCharacters <= 360 * speed
-    })
-    void Promise.allSettled(nextChapter.map((unit) => synthesizeSpeech(unit.text, {
-      bookId: unit.bookId,
-      chapterIndex: unit.chapterIndex,
-      priority: 3,
-    })))
-  }
-
   function pause() { playSessionRef.current += 1; audioRef.current?.pause(); setIsPlaying(false); if (currentUnit) void saveProgress(currentUnit, true) }
   function move(delta: number, autoplay = false) {
     const nextIndex = Math.max(0, Math.min(unitIndex + delta, units.length - 1))
     if (nextIndex === unitIndex) { if (delta > 0) pause(); return }
     setUnitIndex(nextIndex)
-    setChapterIndex(units[nextIndex].chapterIndex)
     if (autoplay) void playCurrent(nextIndex)
   }
   function chooseChapter(index: number) { const target = units.findIndex((unit) => unit.chapterIndex === index); setChapterIndex(index); if (target >= 0) setUnitIndex(target); setTocOpen(false); pause() }
@@ -312,37 +306,46 @@ export function ReaderPage() {
   }
 
   function handleEnded() {
-    const next = units[unitIndex + 1]
-    if (stopAfterChapter && next?.chapterIndex !== currentUnit?.chapterIndex) {
+    const track = chapterTrackRef.current
+    const nextIndex = track?.endIndex ?? unitIndex + 1
+    const next = units[nextIndex]
+    if (stopAfterChapter) {
       setStopAfterChapter(false)
       pause()
       return
     }
-    move(1, true)
+    chapterTrackRef.current = null
+    if (next) { setUnitIndex(nextIndex); void playCurrent(nextIndex) }
+    else pause()
   }
 
   function moveMobilePage(delta: number) {
     const nextPage = Math.max(0, Math.min(mobilePageIndex + delta, mobilePages.length - 1))
-    if (nextPage === mobilePageIndex) return
-    setMobilePageIndex(nextPage)
-    const firstSentence = mobilePages[nextPage]?.[0]?.sentences[0]
-    const paragraphIndex = mobilePages[nextPage]?.[0]?.paragraphIndex
-    const target = units.findIndex((unit) => unit.chapterIndex === chapterIndex && unit.paragraphIndex === paragraphIndex && unit.textOffset === firstSentence?.offset)
-    if (target >= 0) { pause(); setUnitIndex(target); setAudioProgress(0) }
+    if (nextPage !== mobilePageIndex) { setMobilePageIndex(nextPage); return }
+    const nextChapter = chapterIndex + delta
+    if (!parsed || nextChapter < 0 || nextChapter >= parsed.chapters.length) return
+    pendingMobilePageRef.current = delta > 0 ? 'first' : 'last'
+    setChapterIndex(nextChapter)
+  }
+
+  function returnToPlayingPosition() {
+    if (!currentUnit) return
+    pendingMobilePageRef.current = 'playing'
+    setChapterIndex(currentUnit.chapterIndex)
   }
 
   if (error && !parsed) return <main className="reader-state"><p className="form-error">{error}</p><Link to="/books">返回书架</Link></main>
   if (!book || !parsed || !chapter) return <main className="reader-state loading-reader"><span className="spinner" /><h1>正在准备阅读</h1><p>{loadingProgress.detail}</p><div className="progress-track"><i style={{ width: `${loadingProgress.percent}%` }} /></div><small>{loadingProgress.percent}% · 首次在此设备打开时会下载并建立本地缓存</small></main>
 
-  const renderParagraph = (paragraphIndex: number, sentences = splitIntoSentences(chapter.paragraphs[paragraphIndex])) => <p key={`${chapter.index}-${paragraphIndex}-${sentences[0]?.offset ?? 0}`}>{sentences.map((sentence) => { const sentenceEnd = sentence.offset + sentence.text.length; const active = currentUnit?.chapterIndex === chapterIndex && paragraphIndex >= currentUnit.paragraphIndex && paragraphIndex <= currentUnit.endParagraphIndex && sentenceEnd > (paragraphIndex === currentUnit.paragraphIndex ? currentUnit.textOffset : 0) && sentence.offset < (paragraphIndex === currentUnit.endParagraphIndex ? currentUnit.endTextOffset : chapter.paragraphs[paragraphIndex].length); return <span className={active ? 'reading-active' : ''} data-reading-active={active} key={sentence.offset} onClick={() => { const target = units.findIndex((unit) => unit.chapterIndex === chapterIndex && paragraphIndex >= unit.paragraphIndex && paragraphIndex <= unit.endParagraphIndex && sentence.offset >= (paragraphIndex === unit.paragraphIndex ? unit.textOffset : 0) && sentence.offset < (paragraphIndex === unit.endParagraphIndex ? unit.endTextOffset : chapter.paragraphs[paragraphIndex].length)); if (target >= 0) { pause(); setUnitIndex(target); setAudioProgress(0) } }}>{sentence.text}</span> })}</p>
+  const renderParagraph = (paragraphIndex: number, sentences = splitIntoSentences(chapter.paragraphs[paragraphIndex])) => <p key={`${chapter.index}-${paragraphIndex}-${sentences[0]?.offset ?? 0}`}>{sentences.map((sentence) => { const sentenceEnd = sentence.offset + sentence.text.length; const active = currentUnit?.chapterIndex === chapterIndex && paragraphIndex >= currentUnit.paragraphIndex && paragraphIndex <= currentUnit.endParagraphIndex && sentenceEnd > (paragraphIndex === currentUnit.paragraphIndex ? currentUnit.textOffset : 0) && sentence.offset < (paragraphIndex === currentUnit.endParagraphIndex ? currentUnit.endTextOffset : chapter.paragraphs[paragraphIndex].length); return <span className={active ? 'reading-active' : ''} data-reading-active={active} key={sentence.offset} onClick={() => { if (didSwipeRef.current) return; const target = units.findIndex((unit) => unit.chapterIndex === chapterIndex && paragraphIndex >= unit.paragraphIndex && paragraphIndex <= unit.endParagraphIndex && sentence.offset >= (paragraphIndex === unit.paragraphIndex ? unit.textOffset : 0) && sentence.offset < (paragraphIndex === unit.endParagraphIndex ? unit.endTextOffset : chapter.paragraphs[paragraphIndex].length)); if (target >= 0) { const autoplay = isPlaying; pause(); setUnitIndex(target); setAudioProgress(0); if (autoplay) void playCurrent(target) } }}>{sentence.text}</span> })}</p>
 
-  return <main className={`reader-page ${mobileToolbarOpen ? 'toolbar-open' : ''}`} onTouchStart={(event) => { const touch = event.changedTouches[0]; touchStartRef.current = { x: touch.clientX, y: touch.clientY } }} onTouchEnd={(event) => {
+  return <main className={`reader-page ${mobileToolbarOpen ? 'toolbar-open' : ''}`} onTouchStart={(event) => { const touch = event.changedTouches[0]; didSwipeRef.current = false; touchStartRef.current = { x: touch.clientX, y: touch.clientY } }} onTouchEnd={(event) => {
     if (!isMobile) return
     const touch = event.changedTouches[0]
     const deltaX = touch.clientX - touchStartRef.current.x
     const deltaY = touch.clientY - touchStartRef.current.y
-    if (deltaY < -45 && Math.abs(deltaY) > Math.abs(deltaX)) { setMobileToolbarOpen(true); setMobileHintVisible(false); return }
-    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY)) moveMobilePage(deltaX < 0 ? 1 : -1)
+    if (deltaY < -45 && Math.abs(deltaY) > Math.abs(deltaX)) { didSwipeRef.current = true; setMobileToolbarOpen(true); setMobileHintVisible(false); return }
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY)) { didSwipeRef.current = true; moveMobilePage(deltaX < 0 ? 1 : -1) }
   }} onClick={(event) => {
     if (mobileToolbarOpen && !(event.target as HTMLElement).closest('.reader-toolbar, .player, .player-settings, .reader-toc')) {
       setMobileToolbarOpen(false)
@@ -350,7 +353,7 @@ export function ReaderPage() {
       setSettingsOpen(false)
     }
   }}>
-    <audio ref={audioRef} onEnded={handleEnded} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => { const audio = event.currentTarget; setAudioProgress(audio.duration ? audio.currentTime / audio.duration : 0) }} />
+    <audio ref={audioRef} preload="auto" onEnded={handleEnded} onPlay={() => { setIsPlaying(true); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing' }} onPause={() => { setIsPlaying(false); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused' }} onTimeUpdate={(event) => { const audio = event.currentTarget; const progress = audio.duration ? audio.currentTime / audio.duration : 0; setAudioProgress(progress); const track = chapterTrackRef.current; if (!track) return; const totalBytes = track.byteEnds.at(-1) ?? 0; const bytePosition = progress * totalBytes; const offset = track.byteEnds.findIndex((end) => bytePosition < end); const nextUnit = track.unitStarts[offset]; if (nextUnit !== undefined && nextUnit !== unitIndex) setUnitIndex(nextUnit) }} />
     {isMobile && mobileHintVisible && <div className="mobile-toolbar-hint" role="status">↑ 上滑展示工具栏</div>}
     {isMobile && mobileToolbarOpen && <Link className="mobile-reader-back" to="/books" aria-label="返回首页书架">‹</Link>}
     <nav className={`reader-toolbar ${mobileToolbarOpen ? 'open' : ''}`} aria-label="阅读工具">
@@ -371,7 +374,7 @@ export function ReaderPage() {
     </aside>
     <article className="reader-content"><p className="mobile-chapter-title">第 {chapter.index + 1} 节 · {chapter.title}</p><p className="kicker desktop-chapter-kicker">第 {chapter.index + 1} 节</p><h2>{chapter.title}</h2>
       {playerOpen && <section className="player" id="reader-player" aria-label="听书控制">
-        <div className="player-heading"><div><span>正在朗读</span><strong>{chapter.title}</strong></div><em>{cacheStatus || '语音按需缓存'}</em></div>
+        <div className="player-heading"><div><span>正在朗读</span><strong>{parsed.chapters[currentUnit?.chapterIndex ?? chapterIndex]?.title}</strong></div><div className="player-heading-actions">{currentUnit?.chapterIndex !== chapterIndex && <button type="button" onClick={returnToPlayingPosition}>回到当前</button>}<em>{cacheStatus || '语音按需缓存'}</em></div></div>
         <div className="player-progress" aria-label={`本章进度 ${Math.round(chapterProgress)}%`}><i style={{ width: `${chapterProgress}%` }} /></div>
         <div className="player-controls">
           <button className="skip-button" type="button" aria-label="上一句" onClick={() => move(-1, isPlaying)}>‹<small>上一句</small></button>
