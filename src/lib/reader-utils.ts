@@ -6,31 +6,45 @@ export function normalizeText(text: string) {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-export function splitForSpeech(text: string, maxLength = 250) {
-  const normalized = normalizeText(text)
-  if (normalized.length <= maxLength) return normalized ? [normalized] : []
-  const chunks: string[] = []
-  let rest = normalized
-  while (rest.length) {
-    let end = Math.min(maxLength, rest.length)
-    if (end < rest.length) {
-      const breakAt = Math.max(...['。', '！', '？', '；', '，'].map((mark) => rest.lastIndexOf(mark, end)))
-      if (breakAt >= 150) end = breakAt + 1
+export type SentencePart = { text: string; offset: number }
+
+export function splitIntoSentences(text: string, maxLength = 250): SentencePart[] {
+  const matches = text.match(/[^。！？!?]+[。！？!?]+[”’」』）】》]?|[^。！？!?]+$/g) ?? []
+  const parts: SentencePart[] = []
+  let searchFrom = 0
+
+  for (const match of matches) {
+    const offset = text.indexOf(match, searchFrom)
+    searchFrom = offset + match.length
+    let consumed = 0
+    while (consumed < match.length) {
+      let end = Math.min(consumed + maxLength, match.length)
+      if (end < match.length) {
+        const slice = match.slice(consumed, end)
+        const breakAt = Math.max(slice.lastIndexOf('；'), slice.lastIndexOf('，'), slice.lastIndexOf('、'))
+        if (breakAt >= Math.floor(maxLength * 0.6)) end = consumed + breakAt + 1
+      }
+      const raw = match.slice(consumed, end)
+      if (raw.trim()) parts.push({ text: normalizeText(raw), offset: offset + consumed })
+      consumed = end
     }
-    chunks.push(rest.slice(0, end))
-    rest = rest.slice(end).trim()
   }
-  return chunks
+  return parts
+}
+
+export function splitForSpeech(text: string, maxLength = 250) {
+  return splitIntoSentences(text, maxLength).map((part) => part.text)
 }
 
 export function buildReadingUnits(book: ParsedBook) {
   return book.chapters.flatMap((chapter) => chapter.paragraphs.flatMap((paragraph, paragraphIndex) => {
-    let offset = 0
-    return splitForSpeech(paragraph).map((text) => {
-      const unit = { bookId: book.bookId, chapterIndex: chapter.index, paragraphIndex, textOffset: offset, text }
-      offset += text.length
-      return unit
-    })
+    return splitIntoSentences(paragraph).map((part) => ({
+      bookId: book.bookId,
+      chapterIndex: chapter.index,
+      paragraphIndex,
+      textOffset: part.offset,
+      text: part.text,
+    }))
   }))
 }
 

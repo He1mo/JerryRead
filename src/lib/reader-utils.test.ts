@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReadingUnits, findUnitIndex, normalizeText, splitForSpeech } from './reader-utils'
+import { buildReadingUnits, findUnitIndex, normalizeText, splitForSpeech, splitIntoSentences } from './reader-utils'
 
 describe('reader utils', () => {
   it('规范空白并把长文本拆为不超过 250 字的块', () => {
@@ -7,6 +7,14 @@ describe('reader utils', () => {
     const chunks = splitForSpeech(`开头。${'内容'.repeat(180)}。结尾`)
     expect(chunks.length).toBeGreaterThan(1)
     expect(chunks.every((chunk) => chunk.length <= 250)).toBe(true)
+  })
+
+  it('以完整句为朗读单元并保留句子在原段落中的偏移', () => {
+    expect(splitIntoSentences('第一句。第二句！最后一句')).toEqual([
+      { text: '第一句。', offset: 0 },
+      { text: '第二句！', offset: 4 },
+      { text: '最后一句', offset: 8 },
+    ])
   })
 
   it('用统一位置恢复到对应朗读块', () => {

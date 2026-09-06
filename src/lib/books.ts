@@ -4,6 +4,12 @@ import { supabase } from './supabase'
 import { parseTxt } from './text-parser'
 import type { Book, BookFile, ParsedBook } from '../types/library'
 
+export type BookTransferProgress = {
+  stage: 'preparing' | 'transferring' | 'parsing' | 'caching' | 'complete'
+  percent: number
+  detail: string
+}
+
 function getTitle(fileName: string) {
   return fileName.replace(/\.(txt|epub)$/i, '').trim() || '未命名书籍'
 }
@@ -25,7 +31,7 @@ export async function listBooks() {
   return data as Book[]
 }
 
-export async function uploadBook(file: File, onProgress?: (completedParts: number, totalParts: number) => void) {
+export async function uploadBook(file: File, onProgress?: (progress: BookTransferProgress) => void) {
   const fileType = getFileType(file)
   if (!file.size) throw new Error('不能上传空文件。')
   if (file.size > MAX_BOOK_SIZE) throw new Error('单本文件请控制在 900MB 内。')
@@ -35,6 +41,7 @@ export async function uploadBook(file: File, onProgress?: (completedParts: numbe
 
   const bookId = crypto.randomUUID()
   const parts = splitFile(file)
+  onProgress?.({ stage: 'preparing', percent: 4, detail: `正在准备 ${parts.length} 个数据分片` })
   const storagePaths = parts.map((_, index) => `${userData.user.id}/${bookId}/parts/${String(index).padStart(6, '0')}`)
   const uploadedPaths: string[] = []
 
@@ -62,7 +69,7 @@ export async function uploadBook(file: File, onProgress?: (completedParts: numbe
       })
       if (uploadError) throw uploadError
       uploadedPaths.push(storagePaths[index])
-      onProgress?.(index + 1, parts.length)
+      onProgress?.({ stage: 'transferring', percent: Math.round(8 + ((index + 1) / parts.length) * 72), detail: `正在上传第 ${index + 1}/${parts.length} 个分片` })
     }
     const { error: partsError } = await supabase.from('book_files').insert(storagePaths.map((storagePath, partIndex) => ({
       book_id: book.id,
@@ -72,8 +79,11 @@ export async function uploadBook(file: File, onProgress?: (completedParts: numbe
     })))
     if (partsError) throw partsError
 
+    onProgress?.({ stage: 'parsing', percent: 84, detail: '正在解析章节与正文' })
     const parsed = await parseFile(fileType, await file.arrayBuffer(), book.title)
+    onProgress?.({ stage: 'caching', percent: 94, detail: '正在建立本地阅读缓存' })
     await cacheBook({ bookId: book.id, sourceSize: book.file_size, parserVersion: 2, chapters: parsed, cachedAt: Date.now() })
+    onProgress?.({ stage: 'complete', percent: 100, detail: '导入完成' })
     return book
   } catch (uploadError) {
     await supabase.storage.from('books').remove(uploadedPaths)
@@ -88,20 +98,26 @@ export async function getBook(bookId: string) {
   return data as Book
 }
 
-export async function loadParsedBook(book: Book): Promise<ParsedBook> {
+export async function loadParsedBook(book: Book, onProgress?: (progress: BookTransferProgress) => void): Promise<ParsedBook> {
   const cached = await getCachedBook(book.id, book.file_size)
-  if (cached) return cached
+  if (cached) {
+    onProgress?.({ stage: 'complete', percent: 100, detail: '已从本机缓存打开' })
+    return cached
+  }
 
+  onProgress?.({ stage: 'preparing', percent: 6, detail: '正在同步书籍信息' })
   const { data: fileRows, error: filesError } = await supabase.from('book_files').select('*').eq('book_id', book.id).order('part_index')
   if (filesError) throw filesError
   const files = fileRows as BookFile[]
   const paths = files.length ? files.map((file) => file.storage_path) : [book.storage_path]
   const blobs: Blob[] = []
-  for (const path of paths) {
+  for (const [index, path] of paths.entries()) {
     const { data, error } = await supabase.storage.from('books').download(path)
     if (error) throw error
     blobs.push(data)
+    onProgress?.({ stage: 'transferring', percent: Math.round(10 + ((index + 1) / paths.length) * 68), detail: `正在下载第 ${index + 1}/${paths.length} 个分片` })
   }
+  onProgress?.({ stage: 'parsing', percent: 84, detail: '正在解析章节与正文' })
   const parsed: ParsedBook = {
     bookId: book.id,
     sourceSize: book.file_size,
@@ -109,7 +125,9 @@ export async function loadParsedBook(book: Book): Promise<ParsedBook> {
     chapters: await parseFile(book.file_type, await new Blob(blobs).arrayBuffer(), book.title),
     cachedAt: Date.now(),
   }
+  onProgress?.({ stage: 'caching', percent: 94, detail: '正在写入本机缓存，下次可直接打开' })
   await cacheBook(parsed)
+  onProgress?.({ stage: 'complete', percent: 100, detail: '书籍已准备好' })
   return parsed
 }
 

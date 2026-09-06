@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { deleteBook, listBooks, uploadBook } from '../lib/books'
+import { deleteBook, listBooks, uploadBook, type BookTransferProgress } from '../lib/books'
 import { getTtsStatus } from '../lib/tts'
 import type { Book } from '../types/library'
 
@@ -12,7 +12,7 @@ export function BooksPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isUploading, setIsUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState('')
+  const [uploadProgress, setUploadProgress] = useState<BookTransferProgress | null>(null)
   const [modelStatus, setModelStatus] = useState<'checking' | 'online' | 'offline'>('checking')
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
@@ -27,13 +27,13 @@ export function BooksPage() {
     setError('')
     setIsUploading(true)
     try {
-      const book = await uploadBook(file, (completed, total) => setUploadProgress(`正在上传第 ${completed}/${total} 段…`))
+      const book = await uploadBook(file, setUploadProgress)
       setBooks((current) => [book, ...current])
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : '上传失败，请重试。')
     } finally {
       setIsUploading(false)
-      setUploadProgress('')
+      setUploadProgress(null)
       if (fileInput.current) fileInput.current.value = ''
     }
   }
@@ -63,7 +63,11 @@ export function BooksPage() {
       </div>
 
       {error && <p className="form-error" role="alert">{error}</p>}
-      {uploadProgress && <p className="loading-copy" role="status">{uploadProgress}</p>}
+      {uploadProgress && <section className="transfer-card" role="status" aria-live="polite">
+        <div><strong>正在导入书籍</strong><span>{uploadProgress.percent}%</span></div>
+        <div className="progress-track"><i style={{ width: `${uploadProgress.percent}%` }} /></div>
+        <p>{uploadProgress.detail}</p>
+      </section>}
       <section className="model-status" aria-label="语音模型状态">
         <div>
           <p className="kicker">Fish Audio</p>
