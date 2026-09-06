@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+.vercel
+coverage
+*.log
+.DS_Store
+doc/token.txt
+jerryread-m1-*.png
