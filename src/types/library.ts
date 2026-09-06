@@ -30,3 +30,10 @@ export type ParsedBook = {
   chapters: ParsedChapter[]
   cachedAt: number
 }
+
+export type ReadingPosition = {
+  bookId: string
+  chapterIndex: number
+  paragraphIndex: number
+  textOffset: number
+}
