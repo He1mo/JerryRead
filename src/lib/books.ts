@@ -82,7 +82,7 @@ export async function uploadBook(file: File, onProgress?: (progress: BookTransfe
     onProgress?.({ stage: 'parsing', percent: 84, detail: '正在解析章节与正文' })
     const parsed = await parseFile(fileType, await file.arrayBuffer(), book.title)
     onProgress?.({ stage: 'caching', percent: 94, detail: '正在建立本地阅读缓存' })
-    await cacheBook({ bookId: book.id, sourceSize: book.file_size, parserVersion: 2, chapters: parsed, cachedAt: Date.now() })
+    await cacheBook({ bookId: book.id, sourceSize: book.file_size, parserVersion: 3, ...parsed, cachedAt: Date.now() })
     onProgress?.({ stage: 'complete', percent: 100, detail: '导入完成' })
     return book
   } catch (uploadError) {
@@ -118,11 +118,12 @@ export async function loadParsedBook(book: Book, onProgress?: (progress: BookTra
     onProgress?.({ stage: 'transferring', percent: Math.round(10 + ((index + 1) / paths.length) * 68), detail: `正在下载第 ${index + 1}/${paths.length} 个分片` })
   }
   onProgress?.({ stage: 'parsing', percent: 84, detail: '正在解析章节与正文' })
+  const parsedContent = await parseFile(book.file_type, await new Blob(blobs).arrayBuffer(), book.title)
   const parsed: ParsedBook = {
     bookId: book.id,
     sourceSize: book.file_size,
-    parserVersion: 2,
-    chapters: await parseFile(book.file_type, await new Blob(blobs).arrayBuffer(), book.title),
+    parserVersion: 3,
+    ...parsedContent,
     cachedAt: Date.now(),
   }
   onProgress?.({ stage: 'caching', percent: 94, detail: '正在写入本机缓存，下次可直接打开' })
@@ -132,7 +133,7 @@ export async function loadParsedBook(book: Book, onProgress?: (progress: BookTra
 }
 
 async function parseFile(fileType: Book['file_type'], buffer: ArrayBuffer, title: string) {
-  if (fileType === 'txt') return parseTxt(buffer, title)
+  if (fileType === 'txt') return { chapters: parseTxt(buffer, title) }
   const { parseEpub } = await import('./epub-parser')
   return parseEpub(buffer, title)
 }
@@ -149,5 +150,24 @@ export async function deleteBook(book: Book) {
   if (error) throw error
   const paths = (fileRows as Pick<BookFile, 'storage_path'>[]).map((file) => file.storage_path)
   await supabase.storage.from('books').remove(paths.length ? paths : [book.storage_path])
+  await removeRemoteAudioCache(book)
   await removeCachedBook(book.id)
+}
+
+async function removeRemoteAudioCache(book: Book) {
+  const root = `${book.user_id}/${book.id}`
+  const { data: chapters } = await supabase.storage.from('tts-audio').list(root, { limit: 1000 })
+  if (!chapters?.length) return
+  const audioPaths: string[] = []
+  for (const chapter of chapters) {
+    let offset = 0
+    while (true) {
+      const { data: files } = await supabase.storage.from('tts-audio').list(`${root}/${chapter.name}`, { limit: 1000, offset })
+      if (!files?.length) break
+      audioPaths.push(...files.map((file) => `${root}/${chapter.name}/${file.name}`))
+      if (files.length < 1000) break
+      offset += files.length
+    }
+  }
+  if (audioPaths.length) await supabase.storage.from('tts-audio').remove(audioPaths)
 }

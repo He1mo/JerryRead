@@ -2,15 +2,37 @@ import { supabase } from './supabase'
 import { cacheAudio, getCachedAudio } from './book-cache'
 import { normalizeText } from './reader-utils'
 
+const MAX_CONCURRENCY = 3
 const pending = new Map<string, Promise<Blob>>()
-const waiters: Array<() => void> = []
+const queue: Array<{ priority: number; run: () => void }> = []
 let activeRequests = 0
 let cacheConfig: Promise<{ model: string; voiceKey: string }> | null = null
 
-async function withSlot<T>(work: () => Promise<T>) {
-  if (activeRequests >= 3) await new Promise<void>((resolve) => waiters.push(resolve))
-  activeRequests += 1
-  try { return await work() } finally { activeRequests -= 1; waiters.shift()?.() }
+export type SpeechRequestOptions = {
+  bookId?: string
+  chapterIndex?: number
+  priority?: number
+}
+
+function schedule<T>(work: () => Promise<T>, priority: number) {
+  return new Promise<T>((resolve, reject) => {
+    queue.push({
+      priority,
+      run: () => {
+        activeRequests += 1
+        void work().then(resolve, reject).finally(() => {
+          activeRequests -= 1
+          drainQueue()
+        })
+      },
+    })
+    queue.sort((a, b) => a.priority - b.priority)
+    drainQueue()
+  })
+}
+
+function drainQueue() {
+  while (activeRequests < MAX_CONCURRENCY && queue.length) queue.shift()?.run()
 }
 
 async function getAuthHeaders() {
@@ -37,33 +59,37 @@ async function getCacheConfig() {
 
 async function audioKey(text: string) {
   const config = await getCacheConfig()
-  const input = new TextEncoder().encode(`${config.model}|${config.voiceKey}|${normalizeText(text)}`)
+  const input = new TextEncoder().encode(`${config.model}|${config.voiceKey}|mp3-64|speech-v1|${normalizeText(text)}`)
   const digest = await crypto.subtle.digest('SHA-256', input)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-export async function synthesizeSpeech(text: string, speed = 1, signal?: AbortSignal) {
+export async function synthesizeSpeech(text: string, options: SpeechRequestOptions = {}) {
   const key = await audioKey(text)
   const cached = await getCachedAudio(key)
   if (cached) return cached.audio
   const existing = pending.get(key)
   if (existing) return existing
-  const task = withSlot(() => requestSpeech(text, speed, signal)).then(async (audio) => {
-    await cacheAudio({ key, audio, cachedAt: Date.now() })
+
+  const task = schedule(
+    () => requestSpeech(text, key, options),
+    options.priority ?? 1,
+  ).then(async (audio) => {
+    await cacheAudio({ key, audio, bookId: options.bookId, cachedAt: Date.now() })
     return audio
   }).finally(() => pending.delete(key))
   pending.set(key, task)
   return task
 }
 
-async function requestSpeech(text: string, speed: number, signal?: AbortSignal) {
+async function requestSpeech(text: string, key: string, options: SpeechRequestOptions) {
   const headers = await getAuthHeaders()
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/tts`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, speed }), signal,
+      body: JSON.stringify({ text, cacheKey: key, bookId: options.bookId, chapterIndex: options.chapterIndex }),
     })
     if (response.ok) return response.blob()
     const data = await response.json().catch(() => null) as { message?: string } | null

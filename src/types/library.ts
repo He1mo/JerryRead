@@ -29,6 +29,7 @@ export type ParsedBook = {
   sourceSize: number
   parserVersion: number
   chapters: ParsedChapter[]
+  cover?: Blob
   cachedAt: number
 }
 

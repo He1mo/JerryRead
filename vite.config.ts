@@ -14,11 +14,11 @@ export default defineConfig({
       display: 'standalone',
       start_url: '/books',
       icons: [
-        { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-        { src: '/icon-maskable.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
+        { src: '/logo-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
       ],
     },
-    workbox: { navigateFallback: '/index.html', globPatterns: ['**/*.{js,css,html,svg}'] },
+    workbox: { navigateFallback: '/index.html', globPatterns: ['**/*.{js,css,html,svg,png}'] },
   })],
   test: {
     environment: 'jsdom',

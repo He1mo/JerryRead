@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReadingUnits, findUnitIndex, normalizeText, splitForSpeech, splitIntoSentences } from './reader-utils'
+import { buildReadingUnits, buildSpeechChunks, findUnitIndex, normalizeText, splitForSpeech, splitIntoSentences } from './reader-utils'
 
 describe('reader utils', () => {
   it('规范空白并把长文本拆为不超过 250 字的块', () => {
@@ -17,8 +17,18 @@ describe('reader utils', () => {
     ])
   })
 
-  it('用统一位置恢复到对应朗读块', () => {
+  it('不改变原段落，并把短句合并为隐藏的语音块', () => {
+    const book = { bookId: 'book', sourceSize: 1, parserVersion: 2, cachedAt: 1, chapters: [{ index: 0, title: '一', paragraphs: ['第一句。第二句。', '第三句。'] }] }
+    const chunks = buildSpeechChunks(book, 12, 20)
+    expect(book.chapters[0].paragraphs).toEqual(['第一句。第二句。', '第三句。'])
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toMatchObject({ paragraphIndex: 0, textOffset: 0, endParagraphIndex: 1, endTextOffset: 4 })
+    expect(chunks[0].text).toBe('第一句。第二句。\n\n第三句。')
+  })
+
+  it('用统一位置恢复到对应朗读小句', () => {
     const units = buildReadingUnits({ bookId: 'book', sourceSize: 1, parserVersion: 2, cachedAt: 1, chapters: [{ index: 0, title: '一', paragraphs: ['甲', '乙'] }] })
+    expect(units).toHaveLength(2)
     expect(findUnitIndex(units, { bookId: 'book', chapterIndex: 0, paragraphIndex: 1, textOffset: 0 })).toBe(1)
   })
 })

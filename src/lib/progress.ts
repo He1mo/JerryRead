@@ -1,6 +1,7 @@
-import { cacheProgress, getCachedProgress } from './book-cache'
+import { cacheProgress, getCachedBook, getCachedProgress } from './book-cache'
+import { buildReadingUnits, findUnitIndex } from './reader-utils'
 import { supabase } from './supabase'
-import type { ReadingPosition } from '../types/library'
+import type { Book, ReadingPosition } from '../types/library'
 
 export async function loadProgress(bookId: string): Promise<ReadingPosition> {
   const local = await getCachedProgress(bookId)
@@ -25,4 +26,16 @@ export async function saveProgress(position: ReadingPosition, syncRemote = false
     text_offset: position.textOffset,
     updated_at: new Date(updatedAt).toISOString(),
   })
+}
+
+export async function loadShelfProgress(books: Book[]) {
+  const entries = await Promise.all(books.map(async (book) => {
+    const [parsed, progress] = await Promise.all([getCachedBook(book.id, book.file_size), getCachedProgress(book.id)])
+    if (!parsed || !progress) return [book.id, 0] as const
+    const units = buildReadingUnits(parsed)
+    if (!units.length) return [book.id, 0] as const
+    const index = findUnitIndex(units, progress)
+    return [book.id, Math.min(100, Math.max(1, Math.round(((index + 1) / units.length) * 100)))] as const
+  }))
+  return Object.fromEntries(entries) as Record<string, number>
 }

@@ -2,10 +2,24 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const FREE_MODEL = 's2.1-pro-free'
 const MAX_TEXT_LENGTH = 300
+const MP3_BITRATE = 64
+const AUDIO_BUCKET = 'tts-audio'
 const corsHeaders = {
   'Access-Control-Allow-Origin': 'https://jerry-read.vercel.app',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+}
+
+function audio(body: BodyInit, cacheStatus: 'HIT' | 'MISS') {
+  return new Response(body, {
+    headers: {
+      ...corsHeaders,
+      'Access-Control-Expose-Headers': 'X-TTS-Cache',
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'X-TTS-Cache': cacheStatus,
+    },
+  })
 }
 
 function json(message: string, status: number) {
@@ -67,17 +81,31 @@ Deno.serve(async (request) => {
     })
   }
 
-  let body: { text?: unknown; speed?: unknown }
+  let body: { text?: unknown; cacheKey?: unknown; bookId?: unknown; chapterIndex?: unknown }
   try {
     body = await request.json()
   } catch {
     return json('请求格式无效。', 400)
   }
   const text = typeof body.text === 'string' ? body.text.trim() : ''
-  const speed = typeof body.speed === 'number' ? body.speed : 1
   if (!text) return json('缺少要朗读的文本。', 400)
   if (text.length > MAX_TEXT_LENGTH) return json(`单次最多朗读 ${MAX_TEXT_LENGTH} 个字符。`, 422)
-  if (speed < 0.5 || speed > 2) return json('语速必须在 0.5 至 2 倍之间。', 422)
+
+  const cacheKey = typeof body.cacheKey === 'string' && /^[a-f0-9]{64}$/.test(body.cacheKey) ? body.cacheKey : null
+  const bookId = typeof body.bookId === 'string' && /^[a-f0-9-]{36}$/i.test(body.bookId) ? body.bookId : null
+  const chapterIndex = Number.isInteger(body.chapterIndex) && Number(body.chapterIndex) >= 0 ? Number(body.chapterIndex) : null
+  let cachePath: string | null = null
+  let admin: ReturnType<typeof createClient> | null = null
+  if (cacheKey && bookId && chapterIndex !== null) {
+    const { data: ownedBook } = await supabase.from('books').select('id').eq('id', bookId).maybeSingle()
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (ownedBook && serviceRoleKey) {
+      admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceRoleKey)
+      cachePath = `${user.id}/${bookId}/${chapterIndex}/${cacheKey}.mp3`
+      const { data: cached } = await admin.storage.from(AUDIO_BUCKET).download(cachePath)
+      if (cached) return audio(await cached.arrayBuffer(), 'HIT')
+    }
+  }
 
   const fishResponse = await fetch('https://api.fish.audio/v1/tts', {
     method: 'POST',
@@ -90,9 +118,10 @@ Deno.serve(async (request) => {
       text,
       reference_id: fishVoiceId,
       format: 'mp3',
+      mp3_bitrate: MP3_BITRATE,
       chunk_length: 200,
       normalize: true,
-      prosody: { speed, volume: 0, normalize_loudness: true },
+      prosody: { speed: 1, volume: 0, normalize_loudness: true },
     }),
   })
 
@@ -107,11 +136,13 @@ Deno.serve(async (request) => {
     return json(messages[status] ?? 'Fish 服务暂时不可用，请稍后再试。', status >= 500 ? 503 : status)
   }
 
-  return new Response(fishResponse.body, {
-    headers: {
-      ...corsHeaders,
-      'Content-Type': fishResponse.headers.get('Content-Type') ?? 'audio/mpeg',
-      'Cache-Control': 'no-store',
-    },
-  })
+  const generated = await fishResponse.arrayBuffer()
+  if (admin && cachePath) {
+    await admin.storage.from(AUDIO_BUCKET).upload(cachePath, generated, {
+      contentType: 'audio/mpeg',
+      cacheControl: '31536000',
+      upsert: false,
+    })
+  }
+  return audio(generated, 'MISS')
 })

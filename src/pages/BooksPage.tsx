@@ -1,26 +1,58 @@
-import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { deleteBook, listBooks, uploadBook, type BookTransferProgress } from '../lib/books'
-import { getTtsStatus } from '../lib/tts'
+import { loadShelfProgress } from '../lib/progress'
+import { getCachedCovers } from '../lib/book-cache'
 import type { Book } from '../types/library'
 
 function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(size < 1024 * 1024 ? 1 : 0)} MB`
 }
 
+const coverPalettes = [
+  ['#7f2f2a', '#d7ad72'], ['#253d52', '#a7c3d2'], ['#3f513c', '#c7b77d'],
+  ['#59405f', '#d1adc8'], ['#8a542d', '#e0bd76'], ['#293f45', '#a8c8bd'],
+]
+
+function coverStyle(title: string) {
+  const index = [...title].reduce((total, character) => total + (character.codePointAt(0) ?? 0), 0) % coverPalettes.length
+  const [background, accent] = coverPalettes[index]
+  return { '--cover-background': background, '--cover-accent': accent } as CSSProperties
+}
+
 export function BooksPage() {
+  const navigate = useNavigate()
   const [books, setBooks] = useState<Book[]>([])
+  const [readingProgress, setReadingProgress] = useState<Record<string, number>>({})
+  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<BookTransferProgress | null>(null)
-  const [modelStatus, setModelStatus] = useState<'checking' | 'online' | 'offline'>('checking')
   const [error, setError] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    void listBooks().then(setBooks).catch(() => setError('书架加载失败，请刷新后重试。')).finally(() => setIsLoading(false))
-    void getTtsStatus().then((online) => setModelStatus(online ? 'online' : 'offline')).catch(() => setModelStatus('offline'))
+    void listBooks().then(async (items) => {
+      setBooks(items)
+      setReadingProgress(await loadShelfProgress(items))
+    }).catch(() => setError('书架加载失败，请刷新后重试。')).finally(() => setIsLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!books.length) return
+    let disposed = false
+    const urls: string[] = []
+    void getCachedCovers(books.map((book) => book.id)).then((covers) => {
+      if (disposed) return
+      const next = Object.fromEntries(Object.entries(covers).map(([bookId, cover]) => {
+        const url = URL.createObjectURL(cover)
+        urls.push(url)
+        return [bookId, url]
+      }))
+      setCoverUrls(next)
+    })
+    return () => { disposed = true; urls.forEach((url) => URL.revokeObjectURL(url)) }
+  }, [books])
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -54,11 +86,7 @@ export function BooksPage() {
         <div>
           <p className="kicker">你的阅读空间</p>
           <h1>书架</h1>
-          <p>上传 TXT 或 EPUB 后，正文会在此设备解析并缓存。</p>
         </div>
-        <button className="primary-button upload-button" type="button" onClick={() => fileInput.current?.click()} disabled={isUploading}>
-          {isUploading ? '正在导入…' : '上传书籍'}
-        </button>
         <input ref={fileInput} className="visually-hidden" type="file" accept=".txt,.epub,text/plain,application/epub+zip" onChange={(event) => void handleFile(event.target.files?.[0])} />
       </div>
 
@@ -68,14 +96,6 @@ export function BooksPage() {
         <div className="progress-track"><i style={{ width: `${uploadProgress.percent}%` }} /></div>
         <p>{uploadProgress.detail}</p>
       </section>}
-      <section className="model-status" aria-label="语音模型状态">
-        <div>
-          <p className="kicker">Fish Audio</p>
-          <h2>S2.1 Pro Free</h2>
-          <p>固定免费模型 · 央视频音 · 不会回退到付费模型</p>
-        </div>
-        <span className={`status-badge ${modelStatus}`}><i />{modelStatus === 'checking' ? '检测中' : modelStatus === 'online' ? '模型在线' : '服务异常'}</span>
-      </section>
       {isLoading ? <p className="loading-copy">正在整理书架…</p> : null}
       {!isLoading && !books.length ? (
         <section className="empty-shelf">
@@ -88,18 +108,19 @@ export function BooksPage() {
       {books.length ? (
         <section className="book-grid" aria-label="书架列表">
           {books.map((book) => (
-            <article className="book-card" key={book.id}>
-              <div className="book-spine" aria-hidden="true">{book.file_type.toUpperCase()}</div>
+            <article className="book-card" key={book.id} role="link" tabIndex={0} aria-label={`阅读《${book.title}》`} onClick={() => navigate(`/reader/${book.id}`)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') navigate(`/reader/${book.id}`) }}>
+              <div className="book-cover" style={coverStyle(book.title)}>
+                {coverUrls[book.id] ? <img src={coverUrls[book.id]} alt="" /> : <><span className="book-cover-rule" aria-hidden="true" /><strong>{book.title}</strong><small>{book.file_type.toUpperCase()}</small></>}
+              </div>
+              <button className="delete-book-button" type="button" aria-label={`删除《${book.title}》`} title="删除书籍" onClick={(event) => { event.stopPropagation(); void handleDelete(book) }} onKeyDown={(event) => event.stopPropagation()}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" /></svg></button>
               <div className="book-card-content">
-                <p>{formatSize(book.file_size)} · {book.last_opened_at ? '已阅读' : '新导入'}</p>
-                <h2>{book.title}</h2>
-                <div className="book-actions">
-                  <Link to={`/reader/${book.id}`}>开始阅读</Link>
-                  <button type="button" onClick={() => void handleDelete(book)}>删除</button>
-                </div>
+                <strong>{book.title}</strong>
+                <p>{readingProgress[book.id] ? `已读 ${readingProgress[book.id]}%` : '尚未阅读'} · {formatSize(book.file_size)}</p>
+                <span className="book-progress" aria-hidden="true"><i style={{ width: `${readingProgress[book.id] ?? 0}%` }} /></span>
               </div>
             </article>
           ))}
+          <button className="add-book-card" type="button" onClick={() => fileInput.current?.click()} disabled={isUploading}><span aria-hidden="true">＋</span><strong>{isUploading ? '正在导入…' : '添加书籍'}</strong><small>TXT / EPUB</small></button>
         </section>
       ) : null}
     </main>
