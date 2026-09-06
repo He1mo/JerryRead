@@ -12,7 +12,7 @@ export function App() {
           <span className="brand-mark" aria-hidden="true">J</span>
           <span>JerryRead</span>
         </a>
-        <span className="version">v0.1 · 初始化</span>
+        <span className="version">v0.1 · 已部署</span>
       </nav>
 
       <section className="hero">
