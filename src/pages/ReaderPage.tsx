@@ -61,8 +61,8 @@ export function ReaderPage() {
     navigator.mediaSession.metadata = new MediaMetadata({ title: chapter?.title ?? book?.title, artist: book?.title, album: 'JerryRead' })
     navigator.mediaSession.setActionHandler('play', () => void playCurrent())
     navigator.mediaSession.setActionHandler('pause', pause)
-    navigator.mediaSession.setActionHandler('previoustrack', previous)
-    navigator.mediaSession.setActionHandler('nexttrack', next)
+    navigator.mediaSession.setActionHandler('previoustrack', () => move(-1, isPlaying))
+    navigator.mediaSession.setActionHandler('nexttrack', () => move(1, isPlaying))
   })
 
   async function playCurrent(index = unitIndex) {
@@ -86,8 +86,13 @@ export function ReaderPage() {
   }
 
   function pause() { audioRef.current?.pause(); setIsPlaying(false); if (currentUnit) void saveProgress(currentUnit, true) }
-  function next() { const nextIndex = Math.min(unitIndex + 1, units.length - 1); setUnitIndex(nextIndex); if (units[nextIndex]) setChapterIndex(units[nextIndex].chapterIndex); if (isPlaying) void playCurrent(nextIndex) }
-  function previous() { const nextIndex = Math.max(unitIndex - 1, 0); setUnitIndex(nextIndex); if (units[nextIndex]) setChapterIndex(units[nextIndex].chapterIndex); if (isPlaying) void playCurrent(nextIndex) }
+  function move(delta: number, autoplay = false) {
+    const nextIndex = Math.max(0, Math.min(unitIndex + delta, units.length - 1))
+    if (nextIndex === unitIndex) { if (delta > 0) pause(); return }
+    setUnitIndex(nextIndex)
+    setChapterIndex(units[nextIndex].chapterIndex)
+    if (autoplay) void playCurrent(nextIndex)
+  }
   function chooseChapter(index: number) { const target = units.findIndex((unit) => unit.chapterIndex === index); setChapterIndex(index); if (target >= 0) setUnitIndex(target); pause() }
   function setSleep(value: number) {
     if (sleepTimerRef.current) window.clearTimeout(sleepTimerRef.current)
@@ -103,8 +108,8 @@ export function ReaderPage() {
       <div className="chapter-list">{parsed.chapters.map((item) => <button className={item.index === chapterIndex ? 'active' : ''} type="button" key={item.index} onClick={() => chooseChapter(item.index)}>{item.title}</button>)}</div>
     </aside>
     <article className="reader-content"><p className="kicker">第 {chapter.index + 1} 节</p><h2>{chapter.title}</h2>
-      <section className="player" aria-label="听书控制"><audio ref={audioRef} onEnded={next} onPause={() => setIsPlaying(false)} />
-        <button type="button" onClick={previous}>上一段</button><button className="primary-button" type="button" disabled={isPreparing} onClick={() => isPlaying ? pause() : void playCurrent()}>{isPreparing ? '生成中…' : isPlaying ? '暂停' : '播放'}</button><button type="button" onClick={next}>下一段</button>
+      <section className="player" aria-label="听书控制"><audio ref={audioRef} onEnded={() => move(1, true)} onPause={() => setIsPlaying(false)} />
+        <button type="button" onClick={() => move(-1, isPlaying)}>上一段</button><button className="primary-button" type="button" disabled={isPreparing} onClick={() => isPlaying ? pause() : void playCurrent()}>{isPreparing ? '生成中…' : isPlaying ? '暂停' : '播放'}</button><button type="button" onClick={() => move(1, isPlaying)}>下一段</button>
         <label>倍速 <select value={speed} onChange={(event) => { const value = Number(event.target.value); setSpeed(value); if (audioRef.current) audioRef.current.playbackRate = value }}>{[0.75, 1, 1.25, 1.5, 2].map((value) => <option key={value} value={value}>{value}×</option>)}</select></label>
         <label>睡眠 <select value={sleepMinutes} onChange={(event) => setSleep(Number(event.target.value))}><option value={0}>关闭</option>{[30, 60, 90].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label>
       </section>{error && <p className="form-error" role="alert">{error}</p>}

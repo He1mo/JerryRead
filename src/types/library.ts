@@ -27,6 +27,7 @@ export type ParsedChapter = {
 export type ParsedBook = {
   bookId: string
   sourceSize: number
+  parserVersion: number
   chapters: ParsedChapter[]
   cachedAt: number
 }

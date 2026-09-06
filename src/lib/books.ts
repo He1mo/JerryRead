@@ -73,7 +73,7 @@ export async function uploadBook(file: File, onProgress?: (completedParts: numbe
     if (partsError) throw partsError
 
     const parsed = await parseFile(fileType, await file.arrayBuffer(), book.title)
-    await cacheBook({ bookId: book.id, sourceSize: book.file_size, chapters: parsed, cachedAt: Date.now() })
+    await cacheBook({ bookId: book.id, sourceSize: book.file_size, parserVersion: 2, chapters: parsed, cachedAt: Date.now() })
     return book
   } catch (uploadError) {
     await supabase.storage.from('books').remove(uploadedPaths)
@@ -105,6 +105,7 @@ export async function loadParsedBook(book: Book): Promise<ParsedBook> {
   const parsed: ParsedBook = {
     bookId: book.id,
     sourceSize: book.file_size,
+    parserVersion: 2,
     chapters: await parseFile(book.file_type, await new Blob(blobs).arrayBuffer(), book.title),
     cachedAt: Date.now(),
   }

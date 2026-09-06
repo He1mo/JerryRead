@@ -37,7 +37,9 @@ export async function parseEpub(buffer: ArrayBuffer, fallbackTitle: string): Pro
       .filter(Boolean)
     const bodyText = getText(document)
     if (!paragraphs.length && !bodyText) continue
-    const title = document.querySelector('h1, h2, h3, title')?.textContent?.trim() || `第 ${chapters.length + 1} 节`
+    const heading = document.querySelector('h1, h2, h3')?.textContent?.replace(/\s+/g, ' ').trim()
+    const documentTitle = document.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim()
+    const title = heading || documentTitle || `第 ${chapters.length + 1} 节`
     chapters.push({ index: chapters.length, title, paragraphs: paragraphs.length ? paragraphs : [bodyText] })
   }
 

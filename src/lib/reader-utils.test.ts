@@ -10,7 +10,7 @@ describe('reader utils', () => {
   })
 
   it('用统一位置恢复到对应朗读块', () => {
-    const units = buildReadingUnits({ bookId: 'book', sourceSize: 1, cachedAt: 1, chapters: [{ index: 0, title: '一', paragraphs: ['甲', '乙'] }] })
+    const units = buildReadingUnits({ bookId: 'book', sourceSize: 1, parserVersion: 2, cachedAt: 1, chapters: [{ index: 0, title: '一', paragraphs: ['甲', '乙'] }] })
     expect(findUnitIndex(units, { bookId: 'book', chapterIndex: 0, paragraphIndex: 1, textOffset: 0 })).toBe(1)
   })
 })

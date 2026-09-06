@@ -19,7 +19,7 @@ class JerryReadCache extends Dexie {
 const cache = new JerryReadCache()
 
 export function getCachedBook(bookId: string, sourceSize: number) {
-  return cache.parsedBooks.get(bookId).then((book) => (book?.sourceSize === sourceSize ? book : undefined))
+  return cache.parsedBooks.get(bookId).then((book) => (book?.sourceSize === sourceSize && book.parserVersion === 2 ? book : undefined))
 }
 
 export function cacheBook(book: ParsedBook) {
