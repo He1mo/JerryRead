@@ -21,9 +21,15 @@ function getPublishableKey() {
   return Deno.env.get('SUPABASE_ANON_KEY')
 }
 
+async function voiceFingerprint(voiceId: string) {
+  const bytes = new TextEncoder().encode(voiceId)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
-  if (request.method !== 'POST') return json('只支持 POST 请求。', 405)
+  if (!['POST', 'GET'].includes(request.method)) return json('只支持 GET 或 POST 请求。', 405)
 
   const authorization = request.headers.get('Authorization')
   if (!authorization?.startsWith('Bearer ')) return json('请先登录。', 401)
@@ -41,6 +47,11 @@ Deno.serve(async (request) => {
   const fishModel = Deno.env.get('FISH_TTS_MODEL')
   if (!fishApiKey || !fishVoiceId || fishModel !== FREE_MODEL) {
     return json('免费语音服务尚未正确配置，已停止生成。', 503)
+  }
+  if (request.method === 'GET') {
+    return new Response(JSON.stringify({ model: FREE_MODEL, voiceKey: await voiceFingerprint(fishVoiceId) }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    })
   }
 
   let body: { text?: unknown; speed?: unknown }
