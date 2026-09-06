@@ -71,11 +71,15 @@ a { color: inherit; text-decoration: none; }
 .book-actions { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 20px; }
 .book-actions .text-button { color: #756e64; font-weight: 400; }
 .book-actions .text-button:hover { color: #a33d2d; }
-.voice-test { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 22px; margin-top: 42px; padding: 24px; border: 1px solid rgba(37, 35, 31, 0.15); background: rgba(222, 211, 194, 0.35); }
-.voice-test h2 { margin: 8px 0; font: 400 24px Georgia, "Noto Serif SC", serif; }
-.voice-test p:last-child { margin: 0; color: #756e64; font-size: 14px; line-height: 1.6; }
-.voice-test .primary-button { min-width: 142px; margin: 0; padding-inline: 16px; }
-.voice-preview { grid-column: 1 / -1; width: 100%; height: 36px; }
+.model-status { display: flex; align-items: center; justify-content: space-between; gap: 22px; margin-top: 42px; padding: 24px; border: 1px solid rgba(37, 35, 31, 0.15); background: rgba(222, 211, 194, 0.35); }
+.model-status h2 { margin: 8px 0; font: 400 24px Georgia, "Noto Serif SC", serif; }
+.model-status p:last-child { margin: 0; color: #756e64; font-size: 14px; line-height: 1.6; }
+.status-badge { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: #756e64; font-size: 14px; font-weight: 700; }
+.status-badge i { width: 9px; height: 9px; border-radius: 50%; background: #b29569; box-shadow: 0 0 0 4px rgba(178, 149, 105, 0.13); }
+.status-badge.online { color: #377652; }
+.status-badge.online i { background: #3f9a67; box-shadow: 0 0 0 4px rgba(63, 154, 103, 0.14); }
+.status-badge.offline { color: #a33d2d; }
+.status-badge.offline i { background: #a33d2d; box-shadow: 0 0 0 4px rgba(163, 61, 45, 0.13); }
 
 .reader-page { display: grid; min-height: calc(100vh - 82px); grid-template-columns: minmax(220px, 0.28fr) minmax(0, 0.72fr); gap: clamp(28px, 6vw, 96px); }
 .reader-toc { border-right: 1px solid rgba(37, 35, 31, 0.15); padding: 46px 28px 36px 0; }
@@ -111,7 +115,7 @@ a { color: inherit; text-decoration: none; }
   .account span { display: none; }
   .books-page { padding-top: 52px; }
   .page-heading-row { align-items: start; flex-direction: column; }
-  .voice-test { grid-template-columns: 1fr; }
+  .model-status { align-items: flex-start; flex-direction: column; }
   .reader-page { display: block; }
   .reader-toc { border-right: 0; border-bottom: 1px solid rgba(37, 35, 31, 0.15); padding: 30px 0 20px; }
   .chapter-list { display: flex; overflow-x: auto; margin-top: 22px; }

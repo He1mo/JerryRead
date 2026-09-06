@@ -19,6 +19,13 @@ async function getAuthHeaders() {
   return { Authorization: `Bearer ${session.access_token}`, apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY }
 }
 
+export async function getTtsStatus() {
+  const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/tts?health=1`, { headers: await getAuthHeaders() })
+  if (!response.ok) return false
+  const data = await response.json() as { online?: boolean }
+  return data.online === true
+}
+
 async function getCacheConfig() {
   cacheConfig ??= (async () => {
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/tts`, { headers: await getAuthHeaders() })

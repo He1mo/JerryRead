@@ -5,7 +5,7 @@ const MAX_TEXT_LENGTH = 300
 const corsHeaders = {
   'Access-Control-Allow-Origin': 'https://jerry-read.vercel.app',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 function json(message: string, status: number) {
@@ -49,7 +49,20 @@ Deno.serve(async (request) => {
     return json('免费语音服务尚未正确配置，已停止生成。', 503)
   }
   if (request.method === 'GET') {
-    return new Response(JSON.stringify({ model: FREE_MODEL, voiceKey: await voiceFingerprint(fishVoiceId) }), {
+    const healthCheck = new URL(request.url).searchParams.get('health') === '1'
+    let online: boolean | undefined
+    if (healthCheck) {
+      try {
+        const fishHealth = await fetch(`https://api.fish.audio/model/${encodeURIComponent(fishVoiceId)}`, {
+          headers: { Authorization: `Bearer ${fishApiKey}` },
+          signal: AbortSignal.timeout(5000),
+        })
+        online = fishHealth.ok
+      } catch {
+        online = false
+      }
+    }
+    return new Response(JSON.stringify({ model: FREE_MODEL, voiceKey: await voiceFingerprint(fishVoiceId), online }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     })
   }
